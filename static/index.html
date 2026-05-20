@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Agent World</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --surface2: #222;
+    --border: #2e2e2e;
+    --text: #e8e8e8;
+    --muted: #666;
+    --accent: #7c6ff7;
+    --accent-dim: #3d3880;
+    --green: #3fb950;
+    --amber: #d29922;
+    --red: #f85149;
+    --cell: 52px;
+    --radius: 8px;
+  }
+  body { background: var(--bg); color: var(--text); font-family: 'Courier New', monospace; min-height: 100vh; }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 1.5rem;
+    display: flex; align-items: center; gap: 1rem;
+  }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.08em; color: var(--accent); }
+  header span { font-size: 12px; color: var(--muted); }
+
+  .layout { display: grid; grid-template-columns: 280px 1fr 300px; height: calc(100vh - 49px); }
+
+  /* Left panel - config */
+  .panel { border-right: 1px solid var(--border); padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; overflow-y: auto; }
+  .panel:last-child { border-right: none; border-left: 1px solid var(--border); }
+  .panel label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); display: block; margin-bottom: 4px; }
+  .panel input, .panel select {
+    width: 100%; background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); padding: 7px 10px; border-radius: var(--radius); font-size: 13px; font-family: inherit;
+  }
+  .panel input:focus, .panel select:focus { outline: none; border-color: var(--accent); }
+  .panel input[type="password"] { letter-spacing: 0.05em; }
+
+  .run-btn {
+    background: var(--accent); border: none; color: #fff; font-family: inherit;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.05em;
+    padding: 10px; border-radius: var(--radius); cursor: pointer; width: 100%;
+    transition: opacity 0.15s;
+  }
+  .run-btn:hover { opacity: 0.85; }
+  .run-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .stat-row { display: flex; justify-content: space-between; font-size: 12px; }
+  .stat-row .k { color: var(--muted); }
+  .stat-row .v { font-weight: 600; }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; padding: 3px 10px; border-radius: 99px;
+    background: var(--surface2); color: var(--muted); border: 1px solid var(--border);
+  }
+  .status-pill.running { color: var(--amber); border-color: var(--amber); }
+  .status-pill.success { color: var(--green); border-color: var(--green); }
+  .status-pill.failed  { color: var(--red);   border-color: var(--red); }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .dot.pulse { animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* Center - world grid */
+  .world-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; overflow: auto; }
+  .mission-box { font-size: 12px; color: var(--muted); max-width: 420px; text-align: center; margin-bottom: 1.5rem; line-height: 1.6; border: 1px solid var(--border); padding: 10px 16px; border-radius: var(--radius); }
+  .mission-box strong { color: var(--text); }
+
+  #grid-container { display: inline-block; }
+  .grid { display: grid; gap: 2px; }
+  .cell {
+    width: var(--cell); height: var(--cell); border-radius: 5px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-weight: 700; transition: background 0.15s, transform 0.1s;
+    position: relative;
+  }
+  .cell.empty   { background: var(--surface); }
+  .cell.wall    { background: #111; border: 1px solid #1e1e1e; }
+  .cell.goal    { background: #1a2d1a; border: 1px solid #2a4a2a; }
+  .cell.key     { background: #2d2500; border: 1px solid #4a3d00; }
+  .cell.door    { background: #2d1a00; border: 1px solid #4a2d00; }
+  .cell.chest   { background: #1a1a2d; border: 1px solid #2a2a4a; }
+  .cell.agent   { background: var(--accent-dim); border: 1px solid var(--accent); }
+  .cell.agent.just-moved { animation: flash 0.25s ease-out; }
+  @keyframes flash { 0%{transform:scale(1.15)} 100%{transform:scale(1)} }
+
+  .cell-icon { font-size: 22px; line-height: 1; }
+
+  .legend { display: flex; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; justify-content: center; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; }
+
+  /* Right panel - log */
+  .log-panel { display: flex; flex-direction: column; }
+  .log-header { padding: 0.85rem 1.25rem; border-bottom: 1px solid var(--border); font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+  .log-scroll { flex: 1; overflow-y: auto; padding: 0.75rem 1rem; display: flex; flex-direction: column; gap: 8px; }
+  .log-entry {
+    font-size: 12px; line-height: 1.5; padding: 8px 10px;
+    border-radius: var(--radius); border-left: 3px solid transparent;
+    background: var(--surface);
+  }
+  .log-entry.thinking { border-color: var(--amber); opacity: 0.7; font-style: italic; }
+  .log-entry.action   { border-color: var(--accent); }
+  .log-entry.success  { border-color: var(--green); background: #1a2d1a; }
+  .log-entry.error    { border-color: var(--red); background: #2d1a1a; }
+  .log-entry .step-num { color: var(--muted); font-size: 10px; }
+  .log-entry .action-name { color: var(--accent); font-weight: 600; }
+  .log-entry .reason  { color: var(--muted); margin-top: 2px; }
+  .log-entry .result-text { color: var(--text); margin-top: 2px; }
+  .inventory-bar { padding: 8px 1rem; border-top: 1px solid var(--border); font-size: 12px; }
+  .inventory-bar .k { color: var(--muted); }
+
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); margin-bottom: 4px; }
+  hr { border: none; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⬡ LLM AGENT WORLD</h1>
+  <span>an intelligent agent navigating a grid</span>
+</header>
+
+<div class="layout">
+  <!-- Config panel -->
+  <div class="panel">
+    <div>
+      <div class="section-title">Scenario</div>
+      <select id="scenario">
+        <option value="reach_goal">Maze Navigation</option>
+        <option value="key_door" selected>Key &amp; Door</option>
+        <option value="exploration">Exploration</option>
+      </select>
+    </div>
+    <div>
+      <div class="section-title">Anthropic API Key</div>
+      <input type="password" id="api-key" placeholder="sk-ant-…" />
+    </div>
+    <div>
+      <div class="section-title">Max Steps</div>
+      <input type="number" id="max-steps" value="30" min="5" max="100" />
+    </div>
+    <button class="run-btn" id="run-btn" onclick="startRun()">▶ Run Agent</button>
+    <hr>
+    <div id="status-area">
+      <span class="status-pill" id="status-pill"><span class="dot"></span> Idle</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px" id="stats">
+      <div class="stat-row"><span class="k">Steps</span><span class="v" id="s-steps">—</span></div>
+      <div class="stat-row"><span class="k">Goal</span><span class="v" id="s-goal">—</span></div>
+    </div>
+    <hr>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7">
+      The agent uses Claude to observe the grid, reason about its goal, and choose actions — step by step.
+    </div>
+  </div>
+
+  <!-- Grid panel -->
+  <div class="world-panel">
+    <div class="mission-box" id="mission-box">
+      <strong>Select a scenario and enter your API key to begin.</strong>
+    </div>
+    <div id="grid-container">
+      <div class="grid" id="grid"></div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-dim);border:1px solid var(--accent)"></div>Agent (@)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#1a2d1a;border:1px solid #2a4a2a"></div>Goal (G)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#2d2500;border:1px solid #4a3d00"></div>Key (K)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#2d1a00;border:1px solid #4a2d00"></div>Door (D)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#111;border:1px solid #1e1e1e"></div>Wall (#)</div>
+    </div>
+  </div>
+
+  <!-- Log panel -->
+  <div class="panel log-panel">
+    <div class="log-header">Agent Log</div>
+    <div class="log-scroll" id="log"></div>
+    <div class="inventory-bar"><span class="k">Inventory: </span><span id="inv-display">empty</span></div>
+  </div>
+</div>
+
+<script>
+const ICONS = { goal:'🏁', key:'🗝', door:'🚪', chest:'📦', agent:'🤖', wall:'', empty:'' };
+let worldState = null;
+let lastAgentPos = null;
+
+function renderGrid(w) {
+  const grid = document.getElementById('grid');
+  grid.style.gridTemplateColumns = `repeat(${w.width}, var(--cell))`;
+
+  // Build lookup maps
+  const wallSet = new Set(w.walls.map(p => `${p.x},${p.y}`));
+  const objMap = {};
+  w.objects.forEach(o => objMap[`${o.x},${o.y}`] = o.type);
+
+  let html = '';
+  for (let y = 0; y < w.height; y++) {
+    for (let x = 0; x < w.width; x++) {
+      const key = `${x},${y}`;
+      const isAgent = w.agent.x === x && w.agent.y === y;
+      const justMoved = isAgent && lastAgentPos && (lastAgentPos.x !== x || lastAgentPos.y !== y);
+
+      let cls = 'cell ';
+      let icon = '';
+      if (isAgent) { cls += 'agent' + (justMoved ? ' just-moved':''); icon = ICONS.agent; }
+      else if (wallSet.has(key)) { cls += 'wall'; icon = ''; }
+      else if (objMap[key]) { cls += objMap[key]; icon = ICONS[objMap[key]] || '?'; }
+      else { cls += 'empty'; }
+
+      html += `<div class="${cls}"><span class="cell-icon">${icon}</span></div>`;
+    }
+  }
+  grid.innerHTML = html;
+  lastAgentPos = {...w.agent};
+  document.getElementById('inv-display').textContent = w.inventory.length ? w.inventory.join(', ') : 'empty';
+  document.getElementById('s-steps').textContent = w.steps;
+}
+
+function addLog(type, html) {
+  const log = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = `log-entry ${type}`;
+  div.innerHTML = html;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function setStatus(label, cls) {
+  const pill = document.getElementById('status-pill');
+  pill.className = `status-pill ${cls}`;
+  const dot = cls === 'running' ? '<span class="dot pulse"></span>' : '<span class="dot"></span>';
+  pill.innerHTML = `${dot} ${label}`;
+}
+
+async function startRun() {
+  const apiKey = document.getElementById('api-key').value.trim();
+  const scenario = document.getElementById('scenario').value;
+  const maxSteps = parseInt(document.getElementById('max-steps').value) || 30;
+  if (!apiKey) { alert('Please enter your Anthropic API key.'); return; }
+
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('s-goal').textContent = '—';
+  setStatus('Running…', 'running');
+
+  const resp = await fetch('/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scenario, api_key: apiKey, max_steps: maxSteps })
+  });
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const parts = buf.split('\n\n');
+    buf = parts.pop();
+    for (const part of parts) {
+      if (!part.trim()) continue;
+      const lines = part.split('\n');
+      let event = '', data = '';
+      for (const l of lines) {
+        if (l.startsWith('event: ')) event = l.slice(7);
+        if (l.startsWith('data: '))  data  = l.slice(6);
+      }
+      if (!event || !data) continue;
+      try {
+        const d = JSON.parse(data);
+        handleEvent(event, d);
+      } catch(e) {}
+    }
+  }
+
+  document.getElementById('run-btn').disabled = false;
+}
+
+function handleEvent(event, d) {
+  if (event === 'init') {
+    document.getElementById('mission-box').innerHTML = `<strong>Mission:</strong> ${d.mission}`;
+    renderGrid(d.world);
+    addLog('action', `<div>Scenario: <strong>${d.scenario}</strong></div><div class="reason">${d.mission}</div>`);
+  }
+  else if (event === 'thinking') {
+    addLog('thinking', `<span class="step-num">step ${d.step}</span> Agent is thinking…`);
+  }
+  else if (event === 'step') {
+    // Remove last "thinking" entry
+    const log = document.getElementById('log');
+    const last = log.lastElementChild;
+    if (last && last.classList.contains('thinking')) last.remove();
+
+    renderGrid(d.world);
+    const goalBadge = d.goal_reached ? '<span style="color:var(--green)"> ✓ GOAL!</span>' : '';
+    addLog(d.goal_reached ? 'success' : 'action',
+      `<div><span class="step-num">step ${d.step}</span> <span class="action-name">${d.action}</span>${goalBadge}</div>
+       <div class="reason">${d.reasoning}</div>
+       <div class="result-text">${d.result}</div>`
+    );
+    document.getElementById('s-steps').textContent = d.world.steps;
+  }
+  else if (event === 'done') {
+    const reached = d.goal_reached;
+    setStatus(reached ? 'Goal reached!' : 'Finished', reached ? 'success' : 'failed');
+    document.getElementById('s-goal').textContent = reached ? '✓ Yes' : '✗ No';
+    addLog(reached ? 'success' : 'error',
+      reached
+        ? `🏁 Mission complete in ${d.steps} steps!`
+        : `Stopped after ${d.steps} steps. Goal not reached.`
+    );
+  }
+  else if (event === 'error') {
+    setStatus('Error', 'failed');
+    addLog('error', `Error: ${d.message}`);
+    document.getElementById('run-btn').disabled = false;
+  }
+}
+</script>
+</body>
+</html>

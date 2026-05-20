@@ -1,0 +1,25 @@
+# Virtual environment
+humanoid/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.pyc
+
+# macOS
+.DS_Store
+**/.DS_Store
+._*
+
+# Logs (keep directory, not contents)
+logs/*.jsonl
+
+# Env files
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,22 @@
+{"event": "init", "timestamp": "20260520_222059", "scenario": "reach_goal", "mission": "Navigate through the winding corridors and reach the goal (G) at the far corner.", "world_size": {"width": 7, "height": 7}}
+{"event": "step", "step": 1, "action": "move_south", "reasoning": "[extracted from malformed response]", "result": "Moved south.", "pos": {"x": 0, "y": 1}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 2, "action": "move_south", "reasoning": "[extracted from malformed response]", "result": "Moved south.", "pos": {"x": 0, "y": 2}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 3, "action": "move_south", "reasoning": "[extracted from malformed response]", "result": "Moved south.", "pos": {"x": 0, "y": 3}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 4, "action": "move_south", "reasoning": "[extracted from malformed response]", "result": "Moved south.", "pos": {"x": 0, "y": 4}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 5, "action": "move_south", "reasoning": "[extracted from malformed response]", "result": "Moved south.", "pos": {"x": 0, "y": 5}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 6, "action": "move_east", "reasoning": "[extracted from malformed response]", "result": "Moved east.", "pos": {"x": 1, "y": 5}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 7, "action": "move_east", "reasoning": "[extracted from malformed response]", "result": "Moved east.", "pos": {"x": 2, "y": 5}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 8, "action": "move_east", "reasoning": "[extracted from malformed response]", "result": "Moved east.", "pos": {"x": 3, "y": 5}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 9, "action": "move_south", "reasoning": "[extracted from malformed response]", "result": "Moved south.", "pos": {"x": 3, "y": 6}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 10, "action": "west", "reasoning": "[extracted from malformed response]", "result": "Moved west.", "pos": {"x": 2, "y": 6}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 11, "action": "west", "reasoning": "[extracted from malformed response]", "result": "Moved west.", "pos": {"x": 1, "y": 6}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 12, "action": "west", "reasoning": "[extracted from malformed response]", "result": "Moved west.", "pos": {"x": 0, "y": 6}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 13, "action": "north", "reasoning": "[extracted from malformed response]", "result": "Moved north.", "pos": {"x": 0, "y": 5}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 14, "action": "north", "reasoning": "[extracted from malformed response]", "result": "Moved north.", "pos": {"x": 0, "y": 4}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 15, "action": "move_east", "reasoning": "[extracted from malformed response]", "result": "Moved east.", "pos": {"x": 1, "y": 4}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 16, "action": "north", "reasoning": "[extracted from malformed response]", "result": "Moved north.", "pos": {"x": 1, "y": 3}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 17, "action": "north", "reasoning": "[extracted from malformed response]", "result": "Moved north.", "pos": {"x": 1, "y": 2}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 18, "action": "north", "reasoning": "[extracted from malformed response]", "result": "Moved north.", "pos": {"x": 1, "y": 1}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 19, "action": "north", "reasoning": "[extracted from malformed response]", "result": "Moved north.", "pos": {"x": 1, "y": 0}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "step", "step": 20, "action": "west", "reasoning": "[extracted from malformed response]", "result": "Moved west.", "pos": {"x": 0, "y": 0}, "inventory": [], "done": false, "goal_reached": false}
+{"event": "done", "total_steps": 20, "goal_reached": false}
