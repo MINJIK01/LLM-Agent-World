@@ -23,6 +23,7 @@ BLUE  = "\033[94m"
 RED   = "\033[91m"
 GRAY  = "\033[90m"
 CYAN  = "\033[96m"
+MAGENTA = "\033[95m"
 
 LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -32,10 +33,17 @@ def render_pretty(world) -> str:
     TILE_MAP = {
         "@": f"{BOLD}{BLUE}@{RESET}",
         "#": f"{GRAY}#{RESET}",
+        "·": f"{GRAY}·{RESET}",
         "G": f"{GREEN}G{RESET}",
         "K": f"{AMBER}K{RESET}",
         "D": f"{RED}D{RESET}",
+        "T": f"{RED}T{RESET}",
+        "X": f"{BOLD}{RED}X{RESET}",
         "C": f"{CYAN}C{RESET}",
+        "P": f"{MAGENTA}P{RESET}",
+        "O": f"{MAGENTA}O{RESET}",
+        "A": f"{GREEN}A{RESET}",
+        "B": f"{GREEN}B{RESET}",
         ".": f"{GRAY}.{RESET}",
     }
     lines = world.render_ascii().split("\n")
@@ -45,7 +53,7 @@ def render_pretty(world) -> str:
 async def main():
     parser = argparse.ArgumentParser(description="LLM Agent World — CLI")
     parser.add_argument("--scenario", default="key_door",
-                        choices=["reach_goal", "key_door", "exploration"])
+                        choices=["reach_goal", "key_door", "exploration", "factory_delivery", "warehouse_sort", "hazard_navigate"])
     parser.add_argument("--api-key", default=os.environ.get("ANTHROPIC_API_KEY", ""))
     parser.add_argument("--max-steps", type=int, default=30)
     parser.add_argument("--delay", type=float, default=0.5)

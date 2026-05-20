@@ -135,9 +135,16 @@
     <div>
       <div class="section-title">Scenario</div>
       <select id="scenario">
-        <option value="reach_goal">Maze Navigation</option>
-        <option value="key_door" selected>Key &amp; Door</option>
-        <option value="exploration">Exploration</option>
+        <optgroup label="Classic">
+          <option value="reach_goal">Maze Navigation</option>
+          <option value="key_door" selected>Key &amp; Door</option>
+          <option value="exploration">Exploration</option>
+        </optgroup>
+        <optgroup label="Robotics">
+          <option value="factory_delivery">Factory Delivery</option>
+          <option value="warehouse_sort">Warehouse Sort</option>
+          <option value="hazard_navigate">Hazard Navigation</option>
+        </optgroup>
       </select>
     </div>
     <div>
