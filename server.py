@@ -62,6 +62,9 @@ async def run_agent(req: RunRequest):
                 "log_file": os.path.basename(log_path),
             })
 
+            last_action = ""
+            last_result = ""
+
             for step in range(req.max_steps):
                 if world.done:
                     break
@@ -70,13 +73,28 @@ async def run_agent(req: RunRequest):
                 yield _sse("thinking", {"step": step + 1})
 
                 try:
-                    action, reasoning, raw = await agent.decide(obs, mission)
+                    action, reasoning, raw, reflected = await agent.decide(
+                        obs, mission, last_action, last_result
+                    )
                 except Exception as e:
                     write_line({"event": "error", "step": step + 1, "message": str(e)})
                     yield _sse("error", {"message": str(e)})
                     break
 
+                if reflected:
+                    write_line({
+                        "event": "reflection",
+                        "step": step + 1,
+                        "reflection": agent.last_reflection,
+                    })
+                    yield _sse("reflection", {
+                        "step": step + 1,
+                        "reflection": agent.last_reflection,
+                    })
+
                 result_msg = world.step(action)
+                last_action = action
+                last_result = result_msg
 
                 # Write one JSONL line per step
                 write_line({
@@ -89,6 +107,7 @@ async def run_agent(req: RunRequest):
                     "inventory": list(world.inventory),
                     "done": world.done,
                     "goal_reached": world.goal_reached,
+                    "reflected": reflected,
                 })
 
                 yield _sse("step", {

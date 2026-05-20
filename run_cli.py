@@ -88,6 +88,9 @@ async def main():
         "world_size": {"width": world.width, "height": world.height},
     })
 
+    last_action = ""
+    last_result = ""
+
     for step in range(1, args.max_steps + 1):
         if world.done:
             break
@@ -95,13 +98,26 @@ async def main():
         print(f"{GRAY}[step {step}] thinking…{RESET}", end="\r", flush=True)
         try:
             obs = world.get_observation()
-            action, reasoning, _ = await agent.decide(obs, mission)
+            action, reasoning, _, reflected = await agent.decide(
+                obs, mission, last_action, last_result
+            )
         except Exception as e:
             print(f"\n{RED}LLM error: {e}{RESET}")
             write_line({"event": "error", "step": step, "message": str(e)})
             break
 
+        if reflected:
+            print(f"\r{BOLD}{RED}[reflection]{RESET} {agent.last_reflection}")
+            print()
+            write_line({
+                "event": "reflection",
+                "step": step,
+                "reflection": agent.last_reflection,
+            })
+
         result = world.step(action)
+        last_action = action
+        last_result = result
 
         write_line({
             "event": "step",
@@ -113,6 +129,7 @@ async def main():
             "inventory": list(world.inventory),
             "done": world.done,
             "goal_reached": world.goal_reached,
+            "reflected": reflected,
         })
 
         print(f"\r{BOLD}[step {step:02d}]{RESET} {BLUE}{action:<15}{RESET} {GRAY}{reasoning}{RESET}")

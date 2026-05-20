@@ -84,9 +84,16 @@
   }
   .cell.empty   { background: var(--surface); }
   .cell.wall    { background: #111; border: 1px solid #1e1e1e; }
-  .cell.goal    { background: #1a2d1a; border: 1px solid #2a4a2a; }
-  .cell.key     { background: #2d2500; border: 1px solid #4a3d00; }
-  .cell.door    { background: #2d1a00; border: 1px solid #4a2d00; }
+  .cell.goal     { background: #1a2d1a; border: 1px solid #2a4a2a; }
+  .cell.key      { background: #2d2500; border: 1px solid #4a3d00; }
+  .cell.door     { background: #2d1a00; border: 1px solid #4a2d00; }
+  .cell.gate     { background: #2d1a00; border: 1px solid #4a2d00; }
+  .cell.hazard   { background: #2d0000; border: 1px solid #6a0000; }
+  .cell.part     { background: #1a1a2d; border: 1px solid #2a2a4a; }
+  .cell.assembly { background: #1a2d1a; border: 1px solid #2a4a2a; }
+  .cell.depot    { background: #1a2d1a; border: 1px solid #2a4a2a; }
+  .cell.box      { background: #2d2500; border: 1px solid #4a3d00; }
+  .cell.chest    { background: #2d2500; border: 1px solid #4a3d00; }
   .cell.chest   { background: #1a1a2d; border: 1px solid #2a2a4a; }
   .cell.agent   { background: var(--accent-dim); border: 1px solid var(--accent); }
   .cell.agent.just-moved { animation: flash 0.25s ease-out; }
@@ -196,7 +203,13 @@
 </div>
 
 <script>
-const ICONS = { goal:'🏁', key:'🗝', door:'🚪', chest:'📦', agent:'🤖', wall:'', empty:'' };
+const ICONS = {
+  agent:'🤖', wall:'', empty:'',
+  // classic
+  goal:'🏁', key:'🗝️', door:'🚪', chest:'📦',
+  // robotics
+  part:'⚙️', assembly:'🏭', gate:'🔒', hazard:'☢️', depot:'📫', box:'📦',
+};
 let worldState = null;
 let lastAgentPos = null;
 
