@@ -73,9 +73,8 @@ async def run_agent(req: RunRequest):
                 yield _sse("thinking", {"step": step + 1})
 
                 try:
-                    action, reasoning, raw, reflected = await agent.decide(
-                        obs, mission, last_action, last_result
-                    )
+                    action, reasoning, raw, reflected, llm_stuck, llm_stuck_reason = \
+                        await agent.decide(obs, mission, last_action, last_result)
                 except Exception as e:
                     write_line({"event": "error", "step": step + 1, "message": str(e)})
                     yield _sse("error", {"message": str(e)})
@@ -108,6 +107,8 @@ async def run_agent(req: RunRequest):
                     "done": world.done,
                     "goal_reached": world.goal_reached,
                     "reflected": reflected,
+                    "llm_stuck": llm_stuck,
+                    "llm_stuck_reason": llm_stuck_reason if llm_stuck else "",
                 })
 
                 yield _sse("step", {
@@ -150,17 +151,23 @@ def _sse(event: str, data: dict) -> str:
 
 
 def _world_state(world) -> dict:
+    # Ensure seen set is up-to-date before sending to client
+    world._update_seen()
     return {
         "width": world.width,
         "height": world.height,
         "agent": {"x": world.agent_pos[0], "y": world.agent_pos[1]},
         "walls": [{"x": x, "y": y} for x, y in world.walls],
-        "objects": [{"x": x, "y": y, "type": t} for (x, y), t in world.objects.items()],
+        "objects": [{"x": x, "y": y, "type": t} for (x, y), t in world.objects.items()
+                    if world.vision_radius is None or (x, y) in world.seen],
         "inventory": world.inventory,
         "steps": world.steps,
         "done": world.done,
         "goal_reached": world.goal_reached,
         "ascii": world.render_ascii(),
+        "vision_radius": world.vision_radius,
+        "seen": [{"x": x, "y": y} for x, y in world.seen] if world.vision_radius is not None else None,
+        "visited": [{"x": x, "y": y} for x, y in world.visited],
     }
 
 

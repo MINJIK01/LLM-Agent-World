@@ -146,10 +146,14 @@ class GridWorld:
         """
         Build a navigation hint toward the next relevant target.
         Priority order:
-          1. gate exists + no key → hint at key
-          2. delivery task pending + item not in hand → hint at item
-          3. delivery task pending + item in hand → hint at target
-          4. default → hint at goal/assembly/depot
+          1. gate/door exists + no key → hint at key
+          2. gate/door exists + has key + door/gate seen → hint at door/gate
+          3. delivery task pending + item not in hand → hint at item
+          4. delivery task pending + item in hand + target seen → hint at target
+          5. delivery task pending + item in hand + target not seen → explore
+          6. classic key_door: key seen but not held → hint at key
+          7. classic key_door: key held + door seen → hint at door
+          8. default → hint at goal/assembly/depot if seen, else explore
         """
         ax, ay = self.agent_pos
 
@@ -163,25 +167,36 @@ class GridWorld:
             return " and ".join(parts) if parts else "HERE"
 
         def find_obj(name):
-            """Find object position — only return if already seen (or no fog)."""
+            """Find object position — only if already seen (or no fog)."""
             for pos, o in self.objects.items():
                 if o == name:
                     if self.vision_radius is None or pos in self.seen:
                         return pos
             return None
 
-        # 1. Gate exists but no key
-        has_gate = any(o == "gate" for o in self.objects.values())
-        has_key  = "key" in self.inventory
-        if has_gate and not has_key:
+        has_key = "key" in self.inventory
+
+        # ── 1 & 2. Gate/door scenarios ────────────────────────────────────────
+        # Only active if a blocker still exists AND hasn't been unlocked yet
+        existing_blockers = [o for o in self.objects.values() if o in ("gate", "door")]
+        if existing_blockers and not has_key:
             key_pos = find_obj("key")
             if key_pos:
                 return (f"Next target: KEY at {key_pos} — {direction_str(*key_pos)} from you."
-                        " (Pick it up to open the gate.)")
+                        " (Pick it up to open the gate/door.)")
             else:
-                return "You need a KEY to open the gate — explore to find it."
+                return "You need a KEY to open the gate/door — explore to find it."
 
-        # 2 & 3. Active delivery task
+        if existing_blockers and has_key:
+            for blocker in ("gate", "door"):
+                blocker_pos = find_obj(blocker)
+                if blocker_pos:
+                    return (f"You have the key. Head to {blocker.upper()} at {blocker_pos} "
+                            f"— {direction_str(*blocker_pos)} from you to unlock it.")
+            # blocker exists but not seen yet
+            return "You have the key. Find the gate/door — explore to locate it."
+
+        # ── 3–5. Delivery task ────────────────────────────────────────────────
         if self.deliveries:
             item_name, target_name = self.deliveries[0]
             if item_name not in self.inventory:
@@ -194,21 +209,170 @@ class GridWorld:
             else:
                 target_pos = find_obj(target_name)
                 if target_pos:
-                    return (f"Carrying {item_name}. Deliver to {target_name.upper()} at {target_pos} — "
-                            f"{direction_str(*target_pos)} from you.")
+                    return (f"Carrying {item_name}. Deliver to {target_name.upper()} "
+                            f"at {target_pos} — {direction_str(*target_pos)} from you.")
                 else:
-                    return f"Carrying {item_name}. Find the {target_name.upper()} — explore unvisited areas."
+                    return (f"Carrying {item_name}. Find the {target_name.upper()} "
+                            f"— explore unvisited areas.")
 
-        # 4. Default: nearest goal-type object
+        # ── 6 & 7. Classic key/chest pickup (no deliveries queue) ─────────────
+        # key visible but not held
+        key_pos = find_obj("key")
+        if key_pos and not has_key:
+            return (f"Next target: KEY at {key_pos} — {direction_str(*key_pos)} from you."
+                    " Pick it up.")
+
+        # chest visible but not held
+        chest_pos = find_obj("chest")
+        if chest_pos and "chest" not in self.inventory:
+            return (f"Next target: CHEST at {chest_pos} — {direction_str(*chest_pos)} from you."
+                    " Pick it up.")
+
+        # ── 8. Default: goal-type objects ─────────────────────────────────────
         for goal_type in ("goal", "assembly", "depot"):
             pos = find_obj(goal_type)
             if pos:
-                return f"Target ({goal_type.upper()}) is {direction_str(*pos)} from you."
+                return f"Target ({goal_type.upper()}) at {pos} — {direction_str(*pos)} from you."
 
         return "Explore the map — navigate toward unvisited (?) tiles to find your target."
 
+    def _build_explore_hint(self) -> str:
+        """
+        Find the nearest tile that has been SEEN (revealed by sensor) but not yet
+        VISITED (stepped on). This guides the agent toward the frontier of its
+        known map rather than re-exploring already-visited territory.
+
+        Uses BFS from agent position through passable tiles to find:
+          1. Nearest seen-but-unvisited tile (frontier of known map)
+          2. First step direction to reach it
+
+        Returns a hint string, or empty string if the entire seen area is visited.
+        """
+        if self.vision_radius is None:
+            return ""  # full visibility — no explore hint needed
+
+        # Ensure seen set is current before computing frontier
+        self._update_seen()
+
+        ax, ay = self.agent_pos
+
+        # Candidate frontier tiles: seen but not visited, not a wall/hazard
+        def is_frontier(x, y):
+            if (x, y) in self.walls:
+                return False
+            obj = self.objects.get((x, y))
+            if obj and OBJECTS[obj].blocks:
+                return False
+            if (x, y) not in self.seen:
+                return False
+            if (x, y) in self.visited:
+                return False
+            return True
+
+        # Also consider unseen tiles adjacent to seen tiles as exploration targets
+        def is_unseen_border(x, y):
+            if not self.in_bounds(x, y):
+                return False
+            if (x, y) in self.seen:
+                return False
+            # Is any seen tile adjacent to it?
+            for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]:
+                nx, ny = x+dx, y+dy
+                if (nx, ny) in self.seen:
+                    return True
+            return False
+
+        # BFS through passable seen tiles to find nearest frontier or unseen edge
+        from collections import deque
+        queue = deque()
+        queue.append((ax, ay, None, 0))   # (x, y, first_step_direction, dist)
+        visited_bfs = {(ax, ay)}
+        DIR_MAP = {"north": (0,-1), "south": (0,1), "east": (1,0), "west": (-1,0)}
+
+        best_frontier = None
+        best_dir = None
+        best_dist = float("inf")
+
+        while queue:
+            cx, cy, first_dir, dist = queue.popleft()
+
+            if dist >= best_dist:
+                continue
+
+            # Target 1: seen but unvisited tile
+            if is_frontier(cx, cy) and (cx, cy) != (ax, ay):
+                best_frontier = (cx, cy)
+                best_dir = first_dir
+                best_dist = dist
+                continue
+
+            for name, (dx, dy) in DIR_MAP.items():
+                nx, ny = cx+dx, cy+dy
+                if (nx, ny) in visited_bfs:
+                    continue
+                if not self.in_bounds(nx, ny):
+                    continue
+                visited_bfs.add((nx, ny))
+                step_dir = first_dir if first_dir else name
+
+                # Target 2: unseen tile adjacent to seen area — this is the fog frontier
+                if (nx, ny) not in self.seen:
+                    # Skip if it's obviously impassable (wall or known hazard)
+                    if (nx, ny) in self.walls:
+                        continue
+                    obj = self.objects.get((nx, ny))
+                    if obj and OBJECTS[obj].blocks:
+                        continue
+                    if dist + 1 < best_dist:
+                        best_frontier = (nx, ny)
+                        best_dir = step_dir
+                        best_dist = dist + 1
+                    continue
+
+                # Only traverse seen, passable tiles
+                if self.is_blocked(nx, ny):
+                    continue
+                queue.append((nx, ny, step_dir, dist + 1))
+
+        if best_frontier and best_dir:
+            fx, fy = best_frontier
+            dx, dy = fx - ax, fy - ay
+            parts = []
+            if dy < 0: parts.append(f"{-dy} north")
+            elif dy > 0: parts.append(f"{dy} south")
+            if dx > 0: parts.append(f"{dx} east")
+            elif dx < 0: parts.append(f"{-dx} west")
+            dist_str = " and ".join(parts)
+            return (f"Nearest unexplored tile: ({fx},{fy}) — {dist_str} away. "
+                    f"First step: move_{best_dir}.")
+
+        # Fallback: hint toward nearest unseen border tile
+        # (agent hasn't seen enough to BFS to a frontier)
+        nearest_unseen = None
+        nearest_dist = float("inf")
+        for y in range(self.height):
+            for x in range(self.width):
+                if is_unseen_border(x, y):
+                    d = abs(x - ax) + abs(y - ay)
+                    if d < nearest_dist:
+                        nearest_dist = d
+                        nearest_unseen = (x, y)
+
+        if nearest_unseen:
+            ux, uy = nearest_unseen
+            dx, dy = ux - ax, uy - ay
+            parts = []
+            if dy < 0: parts.append(f"{-dy} north")
+            elif dy > 0: parts.append(f"{dy} south")
+            if dx > 0: parts.append(f"{dx} east")
+            elif dx < 0: parts.append(f"{-dx} west")
+            return f"Nearest unseen area: ({ux},{uy}) — {'and '.join(parts)} away."
+
+        return ""
+
     def get_observation(self) -> dict:
         ax, ay = self.agent_pos
+        explore_hint = self._build_explore_hint()
         obs = {
             "position": {"x": ax, "y": ay},
             "world_size": {"width": self.width, "height": self.height},
@@ -216,6 +380,7 @@ class GridWorld:
             "inventory": self.inventory,
             "steps_taken": self.steps,
             "goal_hint": self._build_goal_hint(),
+            "explore_hint": explore_hint,
             "recent_messages": self.messages[-3:],
             "ascii_map": self.render_ascii(),
         }

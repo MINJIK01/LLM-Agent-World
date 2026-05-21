@@ -98,13 +98,17 @@ async def main():
         print(f"{GRAY}[step {step}] thinking…{RESET}", end="\r", flush=True)
         try:
             obs = world.get_observation()
-            action, reasoning, _, reflected = await agent.decide(
+            action, reasoning, _, reflected, llm_stuck, llm_stuck_reason = await agent.decide(
                 obs, mission, last_action, last_result
             )
         except Exception as e:
             print(f"\n{RED}LLM error: {e}{RESET}")
             write_line({"event": "error", "step": step, "message": str(e)})
             break
+
+        if llm_stuck and not reflected:
+            # LLM flagged stuck but MAX_REFLECTIONS already reached
+            print(f"\r{AMBER}[self: stuck]{RESET} {llm_stuck_reason[:80]}")
 
         if reflected:
             print(f"\r{BOLD}{RED}[reflection]{RESET} {agent.last_reflection}")
@@ -130,6 +134,8 @@ async def main():
             "done": world.done,
             "goal_reached": world.goal_reached,
             "reflected": reflected,
+            "llm_stuck": llm_stuck,
+            "llm_stuck_reason": llm_stuck_reason if llm_stuck else "",
         })
 
         print(f"\r{BOLD}[step {step:02d}]{RESET} {BLUE}{action:<15}{RESET} {GRAY}{reasoning}{RESET}")
