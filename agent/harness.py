@@ -51,13 +51,15 @@ Your goal is to accomplish the given mission as efficiently as possible.
 - wait                                              — do nothing (avoid unless truly stuck)
 
 ## Response Format
-You MUST reply with ONLY a JSON object — no prose, no markdown fences:
+You MUST reply with ONLY a valid JSON object — no prose, no markdown fences, no extra text before or after:
 {
   "reasoning": "concise explanation of why you chose this action",
   "action": "<one of the action names above>",
   "stuck": <true if you believe you are stuck or looping, false otherwise>,
   "stuck_reason": "<if stuck=true: one sentence describing why, else empty string>"
 }
+
+IMPORTANT: Your entire response must be parseable as JSON. Do not write anything outside the JSON object.
 
 Set stuck=true when you notice any of these:
 - You have visited the same tile multiple times without progress
@@ -66,12 +68,22 @@ Set stuck=true when you notice any of these:
 
 ## Strategy
 - Read the ascii_map carefully: '·' = explored, '.' = unexplored. Prefer unexplored tiles.
+- Check adjacent tiles for exit counts — "empty (1 exit ⚠ DEAD-END)" means that tile leads nowhere new. AVOID moving into dead-ends unless it contains your target.
 - Follow the goal_hint — it always tells you the next priority target and direction.
 - Follow the explore_hint — it tells you the nearest unseen tile and exactly which direction to step first. Use it when you don't know where to go next.
 - For delivery tasks: pick up the item FIRST, then navigate to the target.
 - Plan routes around hazards (X) — you cannot pass through them.
 - Avoid revisiting '·' cells unless backtracking is truly necessary.
 - Never waste steps with 'look' if the map already shows what's nearby.
+
+## Wall-following rule (use when stuck or oscillating)
+When surrounded by visited tiles or unable to find a new path, use the LEFT-HAND RULE.
+Given your current facing direction, priorities are:
+- facing north → try: west first, then north, then east, then south
+- facing south → try: east first, then south, then west, then north
+- facing east  → try: north first, then east, then south, then west
+- facing west  → try: south first, then west, then north, then east
+Always pick the first unblocked direction in that priority order.
 """
 
 REFLECTION_SYSTEM_PROMPT = """You are a self-diagnostic module for a robot agent.
@@ -199,6 +211,7 @@ def build_prompt(observation: dict, mission: str, history: list[dict]) -> list[d
 
 ## Current State
 - Position: ({observation['position']['x']}, {observation['position']['y']})
+- Facing: {observation.get('facing', 'unknown')} (determined by your last move)
 - World size: {observation['world_size']['width']}×{observation['world_size']['height']}
 - Inventory: {observation['inventory'] if observation['inventory'] else 'empty'}
 - Steps taken: {observation['steps_taken']}

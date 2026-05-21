@@ -61,6 +61,7 @@ class GridWorld:
     # None = full map visible (no fog). Seen tiles are remembered even after leaving.
     vision_radius: int = None
     seen: set = field(default_factory=set)   # tiles revealed so far
+    facing: str = "south"  # last move direction — used for wall-following
 
     def in_bounds(self, x, y):
         return 0 <= x < self.width and 0 <= y < self.height
@@ -125,6 +126,15 @@ class GridWorld:
             rows.append(row)
         return "\n".join(rows)
 
+    def _count_exits(self, x, y) -> int:
+        """Count passable neighbours of (x,y) — used to warn about dead-ends."""
+        count = 0
+        for dx, dy in [(0,-1),(0,1),(1,0),(-1,0)]:
+            nx, ny = x+dx, y+dy
+            if self.in_bounds(nx, ny) and not self.is_blocked(nx, ny):
+                count += 1
+        return count
+
     def get_neighbors(self):
         ax, ay = self.agent_pos
         dirs = {"north": (0,-1), "south": (0,1), "east": (1,0), "west": (-1,0)}
@@ -137,9 +147,16 @@ class GridWorld:
                 result[name] = "wall"
             elif (nx, ny) in self.objects:
                 obj = self.objects[(nx, ny)]
-                result[name] = obj
+                if OBJECTS[obj].blocks:
+                    result[name] = obj  # hazard, door, gate — blocked
+                else:
+                    exits = self._count_exits(nx, ny)
+                    warn = " ⚠ DEAD-END" if exits <= 1 else ""
+                    result[name] = f"{obj} ({exits} exit{'s' if exits != 1 else ''}{warn})"
             else:
-                result[name] = "empty"
+                exits = self._count_exits(nx, ny)
+                warn = " ⚠ DEAD-END" if exits <= 1 else ""
+                result[name] = f"empty ({exits} exit{'s' if exits != 1 else ''}{warn})"
         return result
 
     def _build_goal_hint(self) -> str:
@@ -238,137 +255,197 @@ class GridWorld:
 
     def _build_explore_hint(self) -> str:
         """
-        Find the nearest tile that has been SEEN (revealed by sensor) but not yet
-        VISITED (stepped on). This guides the agent toward the frontier of its
-        known map rather than re-exploring already-visited territory.
+        Find the best frontier tile to explore next, using two signals:
+          1. BFS distance — closer is cheaper to reach
+          2. Wall-pressure score — if seen walls cluster in one direction,
+             prefer frontiers in the OPPOSITE direction (more likely open space)
 
-        Uses BFS from agent position through passable tiles to find:
-          1. Nearest seen-but-unvisited tile (frontier of known map)
-          2. First step direction to reach it
-
-        Returns a hint string, or empty string if the entire seen area is visited.
+        Also maintains a sticky explore_target: once a frontier is chosen,
+        keep pointing at it until the agent reaches it or it becomes invalid,
+        avoiding jittery direction changes every step.
         """
         if self.vision_radius is None:
-            return ""  # full visibility — no explore hint needed
+            return ""
 
-        # Ensure seen set is current before computing frontier
         self._update_seen()
-
         ax, ay = self.agent_pos
-
-        # Candidate frontier tiles: seen but not visited, not a wall/hazard
-        def is_frontier(x, y):
-            if (x, y) in self.walls:
-                return False
-            obj = self.objects.get((x, y))
-            if obj and OBJECTS[obj].blocks:
-                return False
-            if (x, y) not in self.seen:
-                return False
-            if (x, y) in self.visited:
-                return False
-            return True
-
-        # Also consider unseen tiles adjacent to seen tiles as exploration targets
-        def is_unseen_border(x, y):
-            if not self.in_bounds(x, y):
-                return False
-            if (x, y) in self.seen:
-                return False
-            # Is any seen tile adjacent to it?
-            for dx, dy in [(0,1),(0,-1),(1,0),(-1,0)]:
-                nx, ny = x+dx, y+dy
-                if (nx, ny) in self.seen:
-                    return True
-            return False
-
-        # BFS through passable seen tiles to find nearest frontier or unseen edge
-        from collections import deque
-        queue = deque()
-        queue.append((ax, ay, None, 0))   # (x, y, first_step_direction, dist)
-        visited_bfs = {(ax, ay)}
         DIR_MAP = {"north": (0,-1), "south": (0,1), "east": (1,0), "west": (-1,0)}
 
-        best_frontier = None
-        best_dir = None
-        best_dist = float("inf")
+        # ── Wall-pressure: count seen walls/hazards in each direction ─────────
+        wall_pressure = {"north": 0, "south": 0, "east": 0, "west": 0}
+
+        # Map boundaries — agent near an edge means nothing to explore beyond it
+        # Weight: 2 per boundary tile (stronger signal than individual walls)
+        BOUNDARY_WEIGHT = 2
+        if ay == 0:                  wall_pressure["north"] += BOUNDARY_WEIGHT
+        if ay == self.height - 1:    wall_pressure["south"] += BOUNDARY_WEIGHT
+        if ax == 0:                  wall_pressure["west"]  += BOUNDARY_WEIGHT
+        if ax == self.width - 1:     wall_pressure["east"]  += BOUNDARY_WEIGHT
+
+        # Seen walls
+        for (wx, wy) in self.walls:
+            if (wx, wy) not in self.seen:
+                continue
+            dy, dx = wy - ay, wx - ax
+            if dy < 0: wall_pressure["north"] += 1
+            if dy > 0: wall_pressure["south"] += 1
+            if dx > 0: wall_pressure["east"]  += 1
+            if dx < 0: wall_pressure["west"]  += 1
+
+        # Seen hazards
+        for (ox, oy), obj in self.objects.items():
+            if obj != "hazard" or (ox, oy) not in self.seen:
+                continue
+            dy, dx = oy - ay, ox - ax
+            if dy < 0: wall_pressure["north"] += 1
+            if dy > 0: wall_pressure["south"] += 1
+            if dx > 0: wall_pressure["east"]  += 1
+            if dx < 0: wall_pressure["west"]  += 1
+
+        def frontier_boundary_penalty(fx, fy) -> float:
+            """
+            Extra penalty if the frontier tile itself is on the map boundary
+            or has few passable neighbours (low exploration potential).
+            """
+            penalty = 0.0
+            # Edge of map — nothing beyond this direction
+            if fy == 0:                  penalty += 2.0  # north edge
+            if fy == self.height - 1:    penalty += 2.0  # south edge
+            if fx == 0:                  penalty += 2.0  # west edge
+            if fx == self.width - 1:     penalty += 2.0  # east edge
+            # Few exits = low exploration value
+            exits = self._count_exits(fx, fy)
+            if exits <= 1:   penalty += 2.0
+            elif exits == 2: penalty += 0.5
+            return penalty
+
+        # ── Unseen tile count per direction — prefer directions with more unknown ─
+        # Count unseen (?) tiles in each quadrant from agent's position
+        unseen_count = {"north": 0, "south": 0, "east": 0, "west": 0}
+        for y in range(self.height):
+            for x in range(self.width):
+                if (x, y) in self.seen:
+                    continue
+                if (x, y) in self.walls:
+                    continue
+                obj = self.objects.get((x, y))
+                if obj and OBJECTS[obj].blocks:
+                    continue
+                dy, dx = y - ay, x - ax
+                if dy < 0: unseen_count["north"] += 1
+                if dy > 0: unseen_count["south"] += 1
+                if dx > 0: unseen_count["east"]  += 1
+                if dx < 0: unseen_count["west"]  += 1
+
+        total_unseen = sum(unseen_count.values()) or 1  # avoid div by zero
+
+        def open_direction_bonus(fx, fy) -> float:
+            """
+            Bonus proportional to how many unseen tiles lie in the direction
+            of the frontier. More unknown territory → higher bonus.
+            """
+            bonus = 0.0
+            dx, dy = fx - ax, fy - ay
+            # Primary direction bonus
+            if dy < 0:   bonus += unseen_count["north"] / total_unseen * 3.0
+            elif dy > 0: bonus += unseen_count["south"] / total_unseen * 3.0
+            if dx > 0:   bonus += unseen_count["east"]  / total_unseen * 3.0
+            elif dx < 0: bonus += unseen_count["west"]  / total_unseen * 3.0
+            return bonus
+
+        # ── BFS to collect all reachable frontier candidates ─────────────────
+        def is_passable_unseen(x, y):
+            if (x, y) in self.walls: return False
+            obj = self.objects.get((x, y))
+            if obj and OBJECTS[obj].blocks: return False
+            return True
+
+        from collections import deque
+        import math
+        queue = deque()
+        queue.append((ax, ay, None, 0))
+        visited_bfs = {(ax, ay)}
+        candidates = []  # (dist, fx, fy, first_dir)
 
         while queue:
             cx, cy, first_dir, dist = queue.popleft()
-
-            if dist >= best_dist:
-                continue
-
-            # Target 1: seen but unvisited tile
-            if is_frontier(cx, cy) and (cx, cy) != (ax, ay):
-                best_frontier = (cx, cy)
-                best_dir = first_dir
-                best_dist = dist
-                continue
-
-            for name, (dx, dy) in DIR_MAP.items():
-                nx, ny = cx+dx, cy+dy
-                if (nx, ny) in visited_bfs:
-                    continue
-                if not self.in_bounds(nx, ny):
-                    continue
+            for name, (ddx, ddy) in DIR_MAP.items():
+                nx, ny = cx + ddx, cy + ddy
+                if (nx, ny) in visited_bfs: continue
+                if not self.in_bounds(nx, ny): continue
                 visited_bfs.add((nx, ny))
                 step_dir = first_dir if first_dir else name
 
-                # Target 2: unseen tile adjacent to seen area — this is the fog frontier
                 if (nx, ny) not in self.seen:
-                    # Skip if it's obviously impassable (wall or known hazard)
-                    if (nx, ny) in self.walls:
-                        continue
-                    obj = self.objects.get((nx, ny))
-                    if obj and OBJECTS[obj].blocks:
-                        continue
-                    if dist + 1 < best_dist:
-                        best_frontier = (nx, ny)
-                        best_dir = step_dir
-                        best_dist = dist + 1
+                    if is_passable_unseen(nx, ny):
+                        candidates.append((dist + 1, nx, ny, step_dir))
                     continue
 
-                # Only traverse seen, passable tiles
                 if self.is_blocked(nx, ny):
                     continue
+
+                if (nx, ny) not in self.visited:
+                    candidates.append((dist + 1, nx, ny, step_dir))
+
                 queue.append((nx, ny, step_dir, dist + 1))
 
-        if best_frontier and best_dir:
-            fx, fy = best_frontier
-            dx, dy = fx - ax, fy - ay
-            parts = []
-            if dy < 0: parts.append(f"{-dy} north")
-            elif dy > 0: parts.append(f"{dy} south")
-            if dx > 0: parts.append(f"{dx} east")
-            elif dx < 0: parts.append(f"{-dx} west")
-            dist_str = " and ".join(parts)
-            return (f"Nearest unexplored tile: ({fx},{fy}) — {dist_str} away. "
-                    f"First step: move_{best_dir}.")
+        if not candidates:
+            return ""
 
-        # Fallback: hint toward nearest unseen border tile
-        # (agent hasn't seen enough to BFS to a frontier)
-        nearest_unseen = None
-        nearest_dist = float("inf")
-        for y in range(self.height):
-            for x in range(self.width):
-                if is_unseen_border(x, y):
-                    d = abs(x - ax) + abs(y - ay)
-                    if d < nearest_dist:
-                        nearest_dist = d
-                        nearest_unseen = (x, y)
+        # ── Score: wall-pressure bonus - sqrt(distance) penalty ──────────────
+        def score(dist, fx, fy):
+            return open_direction_bonus(fx, fy) - math.sqrt(dist) - frontier_boundary_penalty(fx, fy)
 
-        if nearest_unseen:
-            ux, uy = nearest_unseen
-            dx, dy = ux - ax, uy - ay
-            parts = []
-            if dy < 0: parts.append(f"{-dy} north")
-            elif dy > 0: parts.append(f"{dy} south")
-            if dx > 0: parts.append(f"{dx} east")
-            elif dx < 0: parts.append(f"{-dx} west")
-            return f"Nearest unseen area: ({ux},{uy}) — {'and '.join(parts)} away."
+        candidates.sort(key=lambda c: -score(c[0], c[1], c[2]))
 
-        return ""
+        # ── Score and sort all candidates ─────────────────────────────────────
+        RESCORE_THRESHOLD = 1.5
+
+        candidates.sort(key=lambda c: -score(c[0], c[1], c[2]))
+        top = candidates[0]  # best by score
+        top_score = score(top[0], top[1], top[2])
+
+        # ── Sticky target: hold until reached, invalid, or clearly outscored ──
+        current_target = getattr(self, "explore_target", None)
+
+        if current_target is not None:
+            tx, ty = current_target
+            # Invalidate if reached or blocked
+            if (tx, ty) in self.visited or (tx, ty) in self.walls:
+                current_target = None
+            else:
+                match = next(
+                    ((d, x, y, d2) for d, x, y, d2 in candidates if (x, y) == (tx, ty)),
+                    None
+                )
+                if match is None:
+                    current_target = None  # no longer reachable
+                elif top_score - score(match[0], match[1], match[2]) > RESCORE_THRESHOLD:
+                    current_target = None  # much better option found — switch
+                else:
+                    top = match  # keep current target
+
+        if current_target is None:
+            top = candidates[0]
+            self.explore_target = (top[1], top[2])
+        else:
+            self.explore_target = current_target
+
+        best_dist, fx, fy, best_dir = top
+
+        # ── Format hint ───────────────────────────────────────────────────────
+        dx, dy = fx - ax, fy - ay
+        parts = []
+        if dy < 0: parts.append(f"{-dy} north")
+        elif dy > 0: parts.append(f"{dy} south")
+        if dx > 0: parts.append(f"{dx} east")
+        elif dx < 0: parts.append(f"{-dx} west")
+        dist_str = " and ".join(parts) if parts else "HERE"
+
+        bonus = open_direction_bonus(fx, fy)
+        tag = " [open area preferred]" if bonus > 0 else ""
+        return (f"Explore target: ({fx},{fy}) — {dist_str} away. "
+                f"First step: move_{best_dir}.{tag}")
 
     def get_observation(self) -> dict:
         ax, ay = self.agent_pos
@@ -381,6 +458,7 @@ class GridWorld:
             "steps_taken": self.steps,
             "goal_hint": self._build_goal_hint(),
             "explore_hint": explore_hint,
+            "facing": self.facing,
             "recent_messages": self.messages[-3:],
             "ascii_map": self.render_ascii(),
         }
@@ -408,6 +486,8 @@ class GridWorld:
                         del self.objects[(nx, ny)]
                         self.agent_pos = (nx, ny)
                         self.visited.add((nx, ny))
+                        self._update_seen()
+                        self.facing = action
                         label = "door" if obj == "door" else "gate"
                         msg = f"Used key to unlock and open the {label}. Moved through."
                     else:
@@ -418,6 +498,8 @@ class GridWorld:
             else:
                 self.agent_pos = (nx, ny)
                 self.visited.add((nx, ny))
+                self._update_seen()   # expand sensor view from new position
+                self.facing = action  # update facing direction
                 landed = self.objects.get((nx, ny))
 
                 # Check delivery completion
