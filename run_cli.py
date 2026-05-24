@@ -53,9 +53,11 @@ def render_pretty(world) -> str:
 async def main():
     parser = argparse.ArgumentParser(description="LLM Agent World — CLI")
     parser.add_argument("--scenario", default="key_door",
-                        choices=["reach_goal", "key_door", "exploration", "factory_delivery", "warehouse_sort", "hazard_navigate"])
+                        choices=["reach_goal", "key_door", "exploration",
+                                 "factory_delivery", "warehouse_sort", "hazard_navigate",
+                                 "collab_delivery"])
     parser.add_argument("--api-key", default=os.environ.get("ANTHROPIC_API_KEY", ""))
-    parser.add_argument("--max-steps", type=int, default=30)
+    parser.add_argument("--max-steps", type=int, default=40)
     parser.add_argument("--delay", type=float, default=0.5)
     args = parser.parse_args()
 
@@ -63,10 +65,97 @@ async def main():
         print(f"{RED}Error: provide --api-key or set ANTHROPIC_API_KEY{RESET}")
         sys.exit(1)
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # ── Multi-agent mode ──────────────────────────────────────────────────────
+    if args.scenario == "collab_delivery":
+        from world.multi_agent import build_collab_scenario
+        from agent.harness import MultiAgent
+
+        ma_world, mission_a, mission_b = build_collab_scenario()
+        multi_agent = MultiAgent(api_key=args.api_key)
+        missions = {"A": mission_a, "B": mission_b}
+
+        log_path = os.path.join(LOG_DIR, f"run_{timestamp}_collab_delivery.jsonl")
+        def write_line(record: dict):
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        print(f"\n{BOLD}=== LLM Agent World — MULTI-AGENT ==={RESET}")
+        print(f"Scenario : collab_delivery")
+        print(f"Robot A  : {mission_a[:80]}...")
+        print(f"Robot B  : {mission_b[:80]}...")
+        print(f"Log      : {log_path}\n")
+
+        write_line({
+            "event": "init", "timestamp": timestamp,
+            "scenario": "collab_delivery",
+            "mission_a": mission_a, "mission_b": mission_b,
+            "world_size": {"width": ma_world.world.width, "height": ma_world.world.height},
+        })
+
+        last_actions = {"A": "", "B": ""}
+        last_results = {"A": "", "B": ""}
+
+        for step in range(1, args.max_steps + 1):
+            if ma_world.done:
+                break
+
+            robot_id = ma_world.turn
+            print(f"{GRAY}[step {step}] Robot {robot_id} thinking…{RESET}", end="\r", flush=True)
+
+            try:
+                obs = ma_world.get_observation(robot_id)
+                action, reasoning, _, reflected = await multi_agent.decide(
+                    robot_id, obs, missions[robot_id],
+                    last_actions[robot_id], last_results[robot_id],
+                )
+            except Exception as e:
+                print(f"\n{RED}LLM error (Robot {robot_id}): {e}{RESET}")
+                write_line({"event": "error", "step": step, "robot": robot_id, "message": str(e)})
+                break
+
+            result = ma_world.step(robot_id, action)
+            last_actions[robot_id] = action
+            last_results[robot_id] = result
+
+            robot = ma_world.robots[robot_id]
+            color = BLUE if robot_id == "A" else GREEN
+            print(f"\r{BOLD}[step {step:02d}]{RESET} Robot {color}{robot_id}{RESET} "
+                  f"{BLUE}{action:<15}{RESET} {GRAY}{reasoning[:60]}{RESET}")
+            print(f"         → {result}")
+            if robot.inventory:
+                print(f"         inventory: {robot.inventory}")
+            print()
+
+            write_line({
+                "event": "step", "step": step,
+                "robot": robot_id,
+                "action": action, "reasoning": reasoning, "result": result,
+                "pos": {"x": robot.pos[0], "y": robot.pos[1]},
+                "inventory": list(robot.inventory),
+                "done": ma_world.done, "goal_reached": ma_world.goal_reached,
+                "reflected": reflected,
+            })
+
+            await asyncio.sleep(args.delay)
+
+        write_line({
+            "event": "done",
+            "total_steps": ma_world.total_steps,
+            "goal_reached": ma_world.goal_reached,
+        })
+        if ma_world.goal_reached:
+            print(f"{GREEN}{BOLD}🎉 Mission complete in {ma_world.total_steps} steps!{RESET}")
+        else:
+            print(f"{RED}Stopped after {ma_world.total_steps} steps.{RESET}")
+        print(f"{GRAY}Log saved → {log_path}{RESET}")
+        return
+
+    # ── Single-agent mode (existing) ──────────────────────────────────────────
     world, mission = build_scenario(args.scenario)
     agent = Agent(api_key=args.api_key)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = os.path.join(LOG_DIR, f"run_{timestamp}_{args.scenario}.jsonl")
 
     def write_line(record: dict):
@@ -107,7 +196,6 @@ async def main():
             break
 
         if llm_stuck and not reflected:
-            # LLM flagged stuck but MAX_REFLECTIONS already reached
             print(f"\r{AMBER}[self: stuck]{RESET} {llm_stuck_reason[:80]}")
 
         if reflected:

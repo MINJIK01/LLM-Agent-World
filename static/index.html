@@ -5,6 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LLM Agent World</title>
 <link rel="stylesheet" href="/static/styles.css">
+<style>
+  /* Multi-agent additions */
+  .cell.agent-b { background: #1a3a1a; border: 1px solid #4a9a4a; }
+  .cell.agent-b.just-moved { animation: flash 0.25s ease-out; }
+  .robot-a { color: var(--accent); font-weight: 600; }
+  .robot-b { color: #4a9a4a; font-weight: 600; }
+  .reflection-entry { border-color: var(--red); background: #1a1020; font-style: italic; }
+  .reflection-entry .step-num { color: var(--red); }
+  .fog-indicator { font-size: 10px; color: var(--muted); text-align: center; margin-top: 4px; }
+</style>
 </head>
 <body>
 
@@ -14,7 +24,8 @@
 </header>
 
 <div class="layout">
-  <!-- Config panel -->
+
+  <!-- Left panel — config -->
   <div class="panel">
     <div>
       <div class="section-title">Scenario</div>
@@ -29,6 +40,9 @@
           <option value="warehouse_sort">Warehouse Sort</option>
           <option value="hazard_navigate">Hazard Navigation</option>
         </optgroup>
+        <optgroup label="Multi-Agent">
+          <option value="collab_delivery">Collab Delivery</option>
+        </optgroup>
       </select>
     </div>
     <div>
@@ -37,7 +51,7 @@
     </div>
     <div>
       <div class="section-title">Max Steps</div>
-      <input type="number" id="max-steps" value="30" min="5" max="100" />
+      <input type="number" id="max-steps" value="40" min="5" max="200" />
     </div>
     <button class="run-btn" id="run-btn" onclick="startRun()">▶ Run Agent</button>
     <hr>
@@ -47,14 +61,17 @@
     <div style="display:flex;flex-direction:column;gap:6px" id="stats">
       <div class="stat-row"><span class="k">Steps</span><span class="v" id="s-steps">—</span></div>
       <div class="stat-row"><span class="k">Goal</span><span class="v" id="s-goal">—</span></div>
+      <div class="stat-row"><span class="k">Reflections</span><span class="v" id="s-reflections">0</span></div>
     </div>
     <hr>
     <div style="font-size:11px;color:var(--muted);line-height:1.7">
-      The agent uses Claude to observe the grid, reason about its goal, and choose actions — step by step.
+      The agent uses Claude to observe the grid, reason about its goal, and choose actions — step by step.<br><br>
+      <span style="color:var(--accent)">?</span> = fog of war (unseen tiles)<br>
+      <span style="color:var(--muted)">·</span> = visited tile
     </div>
   </div>
 
-  <!-- Grid panel -->
+  <!-- Center — world grid -->
   <div class="world-panel">
     <div class="mission-box" id="mission-box">
       <strong>Select a scenario and enter your API key to begin.</strong>
@@ -62,65 +79,118 @@
     <div id="grid-container">
       <div class="grid" id="grid"></div>
     </div>
+    <div class="fog-indicator" id="fog-indicator"></div>
     <div class="legend">
       <div class="legend-item"><div class="legend-swatch" style="background:var(--accent-dim);border:1px solid var(--accent)"></div>Agent (@)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#1a3a1a;border:1px solid #4a9a4a"></div>Robot B</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#1a2d1a;border:1px solid #2a4a2a"></div>Goal (G)</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#2d2500;border:1px solid #4a3d00"></div>Key (K)</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#2d1a00;border:1px solid #4a2d00"></div>Door (D)</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#2d0000;border:1px solid #6a0000"></div>Hazard (X)</div>
       <div class="legend-item"><div class="legend-swatch" style="background:#111;border:1px solid #1e1e1e"></div>Wall (#)</div>
     </div>
   </div>
 
-  <!-- Log panel -->
+  <!-- Right panel — log -->
   <div class="panel log-panel">
     <div class="log-header">Agent Log</div>
     <div class="log-scroll" id="log"></div>
     <div class="inventory-bar"><span class="k">Inventory: </span><span id="inv-display">empty</span></div>
   </div>
+
 </div>
 
 <script>
 const ICONS = {
   agent:'🤖', wall:'', empty:'',
-  // classic
   goal:'🏁', key:'🗝️', door:'🚪', chest:'📦',
-  // robotics
   part:'⚙️', assembly:'🏭', gate:'🔒', hazard:'☢️', depot:'📫', box:'📦',
 };
-let worldState = null;
+
 let lastAgentPos = null;
+let reflectionCount = 0;
+
+// ── Grid renderer ─────────────────────────────────────────────────────────────
 
 function renderGrid(w) {
   const grid = document.getElementById('grid');
   grid.style.gridTemplateColumns = `repeat(${w.width}, var(--cell))`;
 
-  // Build lookup maps
   const wallSet = new Set(w.walls.map(p => `${p.x},${p.y}`));
+  const seenSet = w.seen ? new Set(w.seen.map(p => `${p.x},${p.y}`)) : null;
+  const visitedSet = w.visited ? new Set(w.visited.map(p => `${p.x},${p.y}`)) : null;
   const objMap = {};
   w.objects.forEach(o => objMap[`${o.x},${o.y}`] = o.type);
+
+  const agentKey  = `${w.agent.x},${w.agent.y}`;
+  const agentBKey = w.agent_b ? `${w.agent_b.x},${w.agent_b.y}` : null;
 
   let html = '';
   for (let y = 0; y < w.height; y++) {
     for (let x = 0; x < w.width; x++) {
       const key = `${x},${y}`;
-      const isAgent = w.agent.x === x && w.agent.y === y;
+      const isAgent  = key === agentKey;
+      const isAgentB = agentBKey && key === agentBKey;
       const justMoved = isAgent && lastAgentPos && (lastAgentPos.x !== x || lastAgentPos.y !== y);
+
+      // Fog of war: unseen tiles
+      const isFog = seenSet && !seenSet.has(key) && !isAgent && !isAgentB;
+      const isVisited = visitedSet && visitedSet.has(key);
 
       let cls = 'cell ';
       let icon = '';
-      if (isAgent) { cls += 'agent' + (justMoved ? ' just-moved':''); icon = ICONS.agent; }
-      else if (wallSet.has(key)) { cls += 'wall'; icon = ''; }
-      else if (objMap[key]) { cls += objMap[key]; icon = ICONS[objMap[key]] || '?'; }
-      else { cls += 'empty'; }
+      let label = '';
 
-      html += `<div class="${cls}"><span class="cell-icon">${icon}</span></div>`;
+      if (isAgent) {
+        cls += 'agent' + (justMoved ? ' just-moved' : '');
+        icon = w.multi_agent ? '' : ICONS.agent;
+        label = w.multi_agent ? 'A' : '';
+      } else if (isAgentB) {
+        cls += 'agent-b' + (justMoved ? ' just-moved' : '');
+        label = 'B';
+      } else if (isFog) {
+        cls += 'wall';   // reuse wall dark style for fog
+        label = '<span style="color:#333;font-size:14px">?</span>';
+      } else if (wallSet.has(key)) {
+        cls += 'wall';
+      } else if (objMap[key]) {
+        cls += objMap[key];
+        icon = ICONS[objMap[key]] || '?';
+      } else if (isVisited) {
+        cls += 'empty';
+        label = '<span style="color:#333;font-size:12px">·</span>';
+      } else {
+        cls += 'empty';
+      }
+
+      const content = label || `<span class="cell-icon">${icon}</span>`;
+      html += `<div class="${cls}">${content}</div>`;
     }
   }
+
   grid.innerHTML = html;
-  lastAgentPos = {...w.agent};
-  document.getElementById('inv-display').textContent = w.inventory.length ? w.inventory.join(', ') : 'empty';
+  lastAgentPos = { ...w.agent };
+
+  // Inventory + turn indicator
+  const invEl = document.getElementById('inv-display');
+  if (w.multi_agent) {
+    invEl.innerHTML = `Turn: <span class="robot-${w.turn.toLowerCase()}">Robot ${w.turn}</span> &nbsp;|&nbsp; Carrying: ${w.inventory.length ? w.inventory.join(', ') : 'nothing'}`;
+  } else {
+    invEl.textContent = w.inventory.length ? w.inventory.join(', ') : 'empty';
+  }
+
   document.getElementById('s-steps').textContent = w.steps;
+
+  // Fog indicator
+  const fogEl = document.getElementById('fog-indicator');
+  if (w.vision_radius != null) {
+    fogEl.textContent = `sensor radius: ${w.vision_radius} tiles`;
+  } else {
+    fogEl.textContent = '';
+  }
 }
+
+// ── Log helpers ───────────────────────────────────────────────────────────────
 
 function addLog(type, html) {
   const log = document.getElementById('log');
@@ -138,24 +208,31 @@ function setStatus(label, cls) {
   pill.innerHTML = `${dot} ${label}`;
 }
 
+// ── Run ───────────────────────────────────────────────────────────────────────
+
 async function startRun() {
-  const apiKey = document.getElementById('api-key').value.trim();
+  const apiKey   = document.getElementById('api-key').value.trim();
   const scenario = document.getElementById('scenario').value;
-  const maxSteps = parseInt(document.getElementById('max-steps').value) || 30;
+  const maxSteps = parseInt(document.getElementById('max-steps').value) || 40;
+
   if (!apiKey) { alert('Please enter your Anthropic API key.'); return; }
 
   document.getElementById('log').innerHTML = '';
   document.getElementById('run-btn').disabled = true;
   document.getElementById('s-goal').textContent = '—';
+  document.getElementById('s-reflections').textContent = '0';
+  document.getElementById('fog-indicator').textContent = '';
+  reflectionCount = 0;
+  lastAgentPos = null;
   setStatus('Running…', 'running');
 
   const resp = await fetch('/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scenario, api_key: apiKey, max_steps: maxSteps })
+    body: JSON.stringify({ scenario, api_key: apiKey, max_steps: maxSteps }),
   });
 
-  const reader = resp.body.getReader();
+  const reader  = resp.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
 
@@ -167,57 +244,85 @@ async function startRun() {
     buf = parts.pop();
     for (const part of parts) {
       if (!part.trim()) continue;
-      const lines = part.split('\n');
       let event = '', data = '';
-      for (const l of lines) {
+      for (const l of part.split('\n')) {
         if (l.startsWith('event: ')) event = l.slice(7);
         if (l.startsWith('data: '))  data  = l.slice(6);
       }
       if (!event || !data) continue;
-      try {
-        const d = JSON.parse(data);
-        handleEvent(event, d);
-      } catch(e) {}
+      try { handleEvent(event, JSON.parse(data)); } catch(e) {}
     }
   }
 
   document.getElementById('run-btn').disabled = false;
 }
 
+// ── Event handlers ────────────────────────────────────────────────────────────
+
 function handleEvent(event, d) {
+
   if (event === 'init') {
-    document.getElementById('mission-box').innerHTML = `<strong>Mission:</strong> ${d.mission}`;
+    document.getElementById('mission-box').innerHTML =
+      `<strong>Mission:</strong> ${d.mission}`;
     renderGrid(d.world);
-    addLog('action', `<div>Scenario: <strong>${d.scenario}</strong></div><div class="reason">${d.mission}</div>`);
+    const isMulti = d.world.multi_agent;
+    addLog('action',
+      `<div>Scenario: <strong>${d.scenario}</strong>${isMulti ? ' <em>(multi-agent)</em>' : ''}</div>
+       <div class="reason">${d.mission}</div>`
+    );
   }
+
   else if (event === 'thinking') {
-    addLog('thinking', `<span class="step-num">step ${d.step}</span> Agent is thinking…`);
+    const robotLabel = d.robot
+      ? ` <span class="robot-${d.robot.toLowerCase()}">Robot ${d.robot}</span>` : '';
+    addLog('thinking',
+      `<span class="step-num">step ${d.step}</span>${robotLabel} thinking…`
+    );
   }
+
+  else if (event === 'reflection') {
+    reflectionCount++;
+    document.getElementById('s-reflections').textContent = reflectionCount;
+    const robotLabel = d.robot ? ` (Robot ${d.robot})` : '';
+    addLog('reflection-entry',
+      `<div><span class="step-num">step ${d.step}</span> 🔄 Self-reflection${robotLabel}</div>
+       <div class="reason">${d.reflection}</div>`
+    );
+  }
+
   else if (event === 'step') {
-    // Remove last "thinking" entry
     const log = document.getElementById('log');
     const last = log.lastElementChild;
     if (last && last.classList.contains('thinking')) last.remove();
 
     renderGrid(d.world);
-    const goalBadge = d.goal_reached ? '<span style="color:var(--green)"> ✓ GOAL!</span>' : '';
+
+    const goalBadge   = d.goal_reached ? '<span style="color:var(--green)"> ✓ GOAL!</span>' : '';
+    const robotPrefix = d.robot
+      ? `<span class="robot-${d.robot.toLowerCase()}">Robot ${d.robot}</span> ` : '';
+    const stuckBadge  = (d.llm_stuck && !d.reflected)
+      ? '<span style="color:var(--amber)"> ⚠ stuck</span>' : '';
+
     addLog(d.goal_reached ? 'success' : 'action',
-      `<div><span class="step-num">step ${d.step}</span> <span class="action-name">${d.action}</span>${goalBadge}</div>
+      `<div>${robotPrefix}<span class="step-num">step ${d.step}</span> <span class="action-name">${d.action}</span>${goalBadge}${stuckBadge}</div>
        <div class="reason">${d.reasoning}</div>
        <div class="result-text">${d.result}</div>`
     );
+
     document.getElementById('s-steps').textContent = d.world.steps;
   }
+
   else if (event === 'done') {
-    const reached = d.goal_reached;
-    setStatus(reached ? 'Goal reached!' : 'Finished', reached ? 'success' : 'failed');
-    document.getElementById('s-goal').textContent = reached ? '✓ Yes' : '✗ No';
-    addLog(reached ? 'success' : 'error',
-      reached
+    const ok = d.goal_reached;
+    setStatus(ok ? 'Goal reached!' : 'Finished', ok ? 'success' : 'failed');
+    document.getElementById('s-goal').textContent = ok ? '✓ Yes' : '✗ No';
+    addLog(ok ? 'success' : 'error',
+      ok
         ? `🏁 Mission complete in ${d.steps} steps!`
         : `Stopped after ${d.steps} steps. Goal not reached.`
     );
   }
+
   else if (event === 'error') {
     setStatus('Error', 'failed');
     addLog('error', `Error: ${d.message}`);

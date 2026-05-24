@@ -190,6 +190,19 @@ Factory scenarios use a `deliveries` queue: a list of `(item, target)` pairs pro
 
 ## Example run
 
+### Web UI
+
+![LLM Agent World WebUI](image/example.png)
+
+The web UI provides:
+- **Live grid visualization** — watch the agent explore in real time
+- **Mission display** — current goal and progress
+- **Agent log** — reasoning, actions, and results for each step
+- **Inventory tracking** — what the agent is carrying
+- **Status indicator** — running, success, or failure
+
+### Terminal Output
+
 ```
 === LLM Agent World ===
 Scenario : hazard_navigate

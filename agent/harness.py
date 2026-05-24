@@ -432,3 +432,164 @@ class Agent:
                 reflected = True
 
         return action, reasoning, raw, reflected, llm_stuck, llm_stuck_reason
+
+
+# ── Multi-Agent system prompt ─────────────────────────────────────────────────
+
+MULTI_AGENT_SYSTEM_PROMPT = """You are a robot agent in a cooperative multi-robot mission.
+You and your partner robot must work together to complete the mission.
+
+## World Rules
+- The grid uses (x, y) coordinates. x increases eastward, y increases southward.
+- Symbols:
+    A  = Robot A (you or your partner)
+    B  = Robot B (you or your partner)
+    #  = wall
+    ·  = visited empty tile
+    .  = unvisited empty tile (within sensor range)
+    ?  = unknown tile (outside sensor range)
+    G  = goal
+    K  = key
+    T  = gate (locked — needs key)
+    X  = hazard zone (impassable)
+    P  = part (pick up and deliver)
+    A  = assembly line (delivery target)
+- Gates block movement unless a robot carries a key.
+- You can only pick up items you are standing ON.
+- You and your partner CANNOT occupy the same tile.
+
+## Available Actions
+- move_north / move_south / move_east / move_west
+- pick_up   — pick up item at your position
+- wait      — let your partner act first (useful when waiting for gate to open)
+
+## Response Format
+You MUST reply with ONLY a valid JSON object:
+{
+  "reasoning": "what you plan to do and why, considering your partner's state",
+  "action": "<one of the action names above>",
+  "stuck": <true if you are stuck or looping, false otherwise>,
+  "stuck_reason": "<if stuck=true: why, else empty string>"
+}
+
+## Cooperative Strategy
+- Read your ROLE in goal_hint — stick to it.
+- Check partner.pos and partner.inventory — coordinate actions.
+- If you are OPENER: prioritise getting the key and unlocking the gate before anything else.
+- If you are DELIVERER and gate is still locked: pick up the part first, then wait near the gate.
+- Avoid blocking your partner's path.
+- Follow the goal_hint — it always tells you your next priority.
+- Avoid dead-ends (⚠ DEAD-END in neighbors).
+
+## Wall-following rule (use when stuck or oscillating)
+Given your current facing direction, priorities are:
+- facing north → try: west first, then north, then east, then south
+- facing south → try: east first, then south, then west, then north
+- facing east  → try: north first, then east, then south, then west
+- facing west  → try: south first, then west, then north, then east
+"""
+
+
+def build_multi_agent_prompt(observation: dict, mission: str, history: list[dict]) -> list[dict]:
+    """Build prompt for one robot's turn in a multi-agent scenario."""
+    partner = observation.get("partner", {})
+    delivery_line = ""
+    if "deliveries_remaining" in observation:
+        done  = observation["deliveries_done"]
+        total = done + observation["deliveries_remaining"]
+        delivery_line = f"- Deliveries: {done}/{total} complete\n"
+
+    obs_text = f"""
+## Mission
+{mission}
+
+## Your State (Robot {observation['robot_id']})
+- Position: ({observation['position']['x']}, {observation['position']['y']})
+- Facing: {observation.get('facing', 'south')}
+- Inventory: {observation['inventory'] if observation['inventory'] else 'empty'}
+- Steps taken: {observation['steps_taken']}
+{delivery_line}- {observation['goal_hint']}
+
+## Partner State (Robot {partner.get('id','?')})
+- Position: ({partner.get('pos',{}).get('x','?')}, {partner.get('pos',{}).get('y','?')})
+- Inventory: {partner.get('inventory', [])}
+- Last action: {partner.get('last_action', 'unknown')}
+
+## Adjacent tiles
+{__import__('json').dumps(observation['neighbors'], indent=2)}
+
+## Recent events
+{chr(10).join(observation['recent_messages']) if observation['recent_messages'] else 'None yet'}
+
+## Map  (A/B = robots | # = wall | T = gate | · = visited | . = unvisited | ? = unknown)
+```
+{observation['ascii_map']}
+```
+
+What is your next action?
+""".strip()
+
+    messages = list(history)
+    messages.append({"role": "user", "content": obs_text})
+    return messages
+
+
+class MultiAgent:
+    """
+    Manages two Agent instances for cooperative multi-agent play.
+    Each robot has its own LLM conversation history and StuckDetector.
+    """
+
+    def __init__(self, api_key: str, max_history: int = 10):
+        self.agents = {
+            "A": Agent(api_key, max_history),
+            "B": Agent(api_key, max_history),
+        }
+
+    async def decide(
+        self,
+        robot_id: str,
+        observation: dict,
+        mission: str,
+        last_action: str = "",
+        last_result: str = "",
+    ) -> tuple[str, str, str, bool]:
+        """
+        Ask LLM for next action for the given robot.
+        Uses MULTI_AGENT_SYSTEM_PROMPT and cooperative prompt format.
+        Returns (action, reasoning, raw, reflected).
+        """
+        agent = self.agents[robot_id]
+        reflected = False
+        agent.last_reflection = ""
+
+        if last_action and last_result:
+            agent.stuck_detector.record(
+                tuple(observation["position"].values()),
+                last_action,
+                last_result,
+            )
+
+        # Build prompt using multi-agent format
+        messages = build_multi_agent_prompt(
+            observation, mission, agent.history[-agent.max_history:]
+        )
+        raw = await call_llm(messages, agent.api_key, system=MULTI_AGENT_SYSTEM_PROMPT)
+        action, reasoning, llm_stuck, llm_stuck_reason = parse_response(raw)
+
+        agent.history.append({"role": "user",      "content": messages[-1]["content"]})
+        agent.history.append({"role": "assistant",  "content": raw})
+
+        total_reflections = agent.stuck_detector.reflection_count
+
+        if llm_stuck and total_reflections < Agent.MAX_REFLECTIONS:
+            reason = f"[LLM self-report] {llm_stuck_reason or 'Agent flagged itself as stuck.'}"
+            await agent._trigger_reflection(observation, mission, reason)
+            reflected = True
+        elif not llm_stuck and total_reflections < Agent.MAX_REFLECTIONS:
+            rule_stuck, rule_reason = agent.stuck_detector.is_stuck()
+            if rule_stuck:
+                await agent._trigger_reflection(observation, mission, rule_reason)
+                reflected = True
+
+        return action, reasoning, raw, reflected
