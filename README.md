@@ -44,6 +44,7 @@ llm-agent-world/
 │   └── harness.py    # Agent harness — prompt builder, LLM caller, action parser
 ├── static/
 │   └── index.html    # Web UI — live grid visualiser (SSE consumer)
+│   └── styles.css
 ├── logs/             # One .jsonl file per run (auto-created)
 ├── server.py         # FastAPI server — /run endpoint with SSE streaming
 ├── run_cli.py        # Terminal runner — coloured ASCII output + JSONL log
