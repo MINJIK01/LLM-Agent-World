@@ -253,4 +253,3 @@ Full run logs are saved as JSONL (one line per step) in `logs/`. Each step recor
 
 - **No explicit path planning** — the agent reasons step-by-step rather than computing a full route; a planning step before acting would reduce backtracking in complex mazes.
 - **No long-term spatial map** — the `seen` set persists per run but the LLM receives only the current ASCII snapshot; an explicit graph structure passed in context could support more deliberate route planning on larger grids.
-- **Single-agent only** — a natural extension for multi-robot factory scenarios where agents must coordinate deliveries without colliding.
