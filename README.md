@@ -188,6 +188,24 @@ A rolling window of the last 10 turns (observation + response pairs) gives the L
 
 Factory scenarios use a `deliveries` queue: a list of `(item, target)` pairs processed in order. The hint system always points at the current priority target. On delivery, the queue advances and the agent is told what comes next.
 
+### Multi-agent cooperation
+
+`collab_delivery` places two robots in the same world with complementary roles:
+Robot A (OPENER) must find a key and unlock a gate; Robot B (DELIVERER) must
+collect a part and deliver it through that gate to an assembly line on the other side.
+Neither can complete the mission alone.
+
+Key design decisions:
+- **Shared sensor data** — both robots merge their `seen` sets after every move,
+  so discoveries by one are immediately visible to the other. This mirrors real
+  multi-robot systems where agents broadcast sensor readings over a shared network.
+- **Role-aware goal hint** — each robot receives a hint tailored to its role,
+  preventing them from interfering with each other's tasks.
+- **Independent LLM instances** — each robot has its own conversation history and
+  StuckDetector, so one robot's stuck state doesn't pollute the other's reasoning.
+- **Turn-based execution** — robots alternate turns (A → B → A → …), giving each
+  full visibility of the other's last action before deciding.
+  
 ---
 
 ## Example run
