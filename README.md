@@ -29,8 +29,9 @@ python run_cli.py --scenario key_door --api-key sk-ant-...
 | `factory_delivery` | Carry a part through a locked gate to the assembly line | radius 3 | Delivery + gate |
 | `warehouse_sort` | Sort two boxes to their respective depots | radius 3 | Multi-delivery |
 | `hazard_navigate` | Deliver a part while avoiding impassable hazard zones | radius 2 | Obstacle avoidance |
+| `collab_delivery` | Two robots cooperate — Robot A unlocks a gate, Robot B delivers a part through it | radius 3 | Multi-agent cooperation |
 
-The **robotics scenarios** (`factory_delivery`, `warehouse_sort`, `hazard_navigate`) are inspired by real industrial robot tasks — navigating factory floors, handling parts, and responding to hazards.
+The **robotics scenarios** (`factory_delivery`, `warehouse_sort`, `hazard_navigate`) are inspired by real industrial robot tasks — navigating factory floors, handling parts, and responding to hazards. **`collab_delivery`** extends this with two cooperative agents that must coordinate to complete a shared mission.
 
 ---
 
@@ -39,15 +40,16 @@ The **robotics scenarios** (`factory_delivery`, `warehouse_sort`, `hazard_naviga
 ```
 llm-agent-world/
 ├── world/
-│   └── grid.py       # GridWorld engine — tiles, objects, fog of war, observations
+│   ├── grid.py         # GridWorld engine — tiles, objects, fog of war, observations
+│   └── multi_agent.py  # Multi-agent world — two cooperative robots, shared sensor data
 ├── agent/
-│   └── harness.py    # Agent harness — prompt builder, LLM caller, action parser
+│   └── harness.py      # Agent harness — prompt builder, LLM caller, action parser
 ├── static/
-│   └── index.html    # Web UI — live grid visualiser (SSE consumer)
+│   ├── index.html      # Web UI — live grid visualiser (SSE consumer)
 │   └── styles.css
-├── logs/             # One .jsonl file per run (auto-created)
-├── server.py         # FastAPI server — /run endpoint with SSE streaming
-├── run_cli.py        # Terminal runner — coloured ASCII output + JSONL log
+├── logs/               # One .jsonl file per run (auto-created)
+├── server.py           # FastAPI server — /run endpoint with SSE streaming
+├── run_cli.py          # Terminal runner — coloured ASCII output + JSONL log
 └── requirements.txt
 ```
 
