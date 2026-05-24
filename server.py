@@ -12,6 +12,7 @@ from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -19,6 +20,10 @@ from world.grid import build_scenario
 from agent.harness import Agent
 
 app = FastAPI(title="LLM Agent World")
+
+# Mount static files
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 LOG_DIR = os.path.join(os.path.dirname(__file__), "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
