@@ -47,7 +47,6 @@ Your goal is to accomplish the given mission as efficiently as possible.
 ## Available Actions
 - move_north / move_south / move_east / move_west  — move one tile
 - pick_up                                           — pick up item at your position
-- look                                              — inspect all 4 neighbours (costs a step, use sparingly)
 - wait                                              — do nothing (avoid unless truly stuck)
 
 ## Response Format
@@ -74,7 +73,6 @@ Set stuck=true when you notice any of these:
 - For delivery tasks: pick up the item FIRST, then navigate to the target.
 - Plan routes around hazards (X) — you cannot pass through them.
 - Avoid revisiting '·' cells unless backtracking is truly necessary.
-- Never waste steps with 'look' if the map already shows what's nearby.
 
 ## Wall-following rule (use when stuck or oscillating)
 When surrounded by visited tiles or unable to find a new path, use the LEFT-HAND RULE.
@@ -297,7 +295,7 @@ def parse_response(raw: str) -> tuple[str, str, bool, str]:
     VALID_ACTIONS = {
         "move_north", "move_south", "move_east", "move_west",
         "north", "south", "east", "west",
-        "pick_up", "look", "wait",
+        "pick_up", "wait",
     }
     cleaned = re.sub(r"```[a-z]*\n?", "", raw).strip("`").strip()
     try:

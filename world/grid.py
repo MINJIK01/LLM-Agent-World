@@ -542,11 +542,6 @@ class GridWorld:
             else:
                 msg = "Nothing to pick up here."
 
-        elif action == "look":
-            neighbors = self.get_neighbors()
-            parts = [f"{d}: {v}" for d, v in neighbors.items()]
-            msg = "Surroundings — " + " | ".join(parts)
-
         elif action == "wait":
             msg = "Waited one step."
 
