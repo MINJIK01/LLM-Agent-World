@@ -271,49 +271,16 @@ class GridWorld:
         ax, ay = self.agent_pos
         DIR_MAP = {"north": (0,-1), "south": (0,1), "east": (1,0), "west": (-1,0)}
 
-        # ── Wall-pressure: count seen walls/hazards in each direction ─────────
-        wall_pressure = {"north": 0, "south": 0, "east": 0, "west": 0}
-
-        # Map boundaries — agent near an edge means nothing to explore beyond it
-        # Weight: 2 per boundary tile (stronger signal than individual walls)
-        BOUNDARY_WEIGHT = 2
-        if ay == 0:                  wall_pressure["north"] += BOUNDARY_WEIGHT
-        if ay == self.height - 1:    wall_pressure["south"] += BOUNDARY_WEIGHT
-        if ax == 0:                  wall_pressure["west"]  += BOUNDARY_WEIGHT
-        if ax == self.width - 1:     wall_pressure["east"]  += BOUNDARY_WEIGHT
-
-        # Seen walls
-        for (wx, wy) in self.walls:
-            if (wx, wy) not in self.seen:
-                continue
-            dy, dx = wy - ay, wx - ax
-            if dy < 0: wall_pressure["north"] += 1
-            if dy > 0: wall_pressure["south"] += 1
-            if dx > 0: wall_pressure["east"]  += 1
-            if dx < 0: wall_pressure["west"]  += 1
-
-        # Seen hazards
-        for (ox, oy), obj in self.objects.items():
-            if obj != "hazard" or (ox, oy) not in self.seen:
-                continue
-            dy, dx = oy - ay, ox - ax
-            if dy < 0: wall_pressure["north"] += 1
-            if dy > 0: wall_pressure["south"] += 1
-            if dx > 0: wall_pressure["east"]  += 1
-            if dx < 0: wall_pressure["west"]  += 1
-
         def frontier_boundary_penalty(fx, fy) -> float:
             """
-            Extra penalty if the frontier tile itself is on the map boundary
-            or has few passable neighbours (low exploration potential).
+            Penalty if the frontier tile is on the map boundary (nothing beyond)
+            or has few exits (likely a dead end — low exploration value).
             """
             penalty = 0.0
-            # Edge of map — nothing beyond this direction
-            if fy == 0:                  penalty += 2.0  # north edge
-            if fy == self.height - 1:    penalty += 2.0  # south edge
-            if fx == 0:                  penalty += 2.0  # west edge
-            if fx == self.width - 1:     penalty += 2.0  # east edge
-            # Few exits = low exploration value
+            if fy == 0:                  penalty += 2.0
+            if fy == self.height - 1:    penalty += 2.0
+            if fx == 0:                  penalty += 2.0
+            if fx == self.width - 1:     penalty += 2.0
             exits = self._count_exits(fx, fy)
             if exits <= 1:   penalty += 2.0
             elif exits == 2: penalty += 0.5
